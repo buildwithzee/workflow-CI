@@ -1,13 +1,13 @@
 import os
-import sys
 import argparse
 import warnings
 import json
 import pickle
-import numpy as np
+
 import pandas as pd
 import mlflow
 import mlflow.sklearn
+
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.metrics import (
@@ -18,43 +18,41 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
 )
-from sklearn.preprocessing import LabelEncoder
 
 warnings.filterwarnings("ignore")
 
-#argparse  
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Crop Recommendation — RF Training")
-    parser.add_argument("--data_path",    type=str,   default="crop_recommendation_preprocessing/crop_recommendation_preprocessing.csv")
-    parser.add_argument("--target_col",   type=str,   default="label_encoded")
-    parser.add_argument("--test_size",    type=float, default=0.2)
-    parser.add_argument("--random_state", type=int,   default=42)
-    parser.add_argument("--n_estimators", type=str,   default="[100, 200]")
-    parser.add_argument("--max_depth",    type=str,   default="[null, 10, 20]")
-    parser.add_argument("--min_samples_split", type=str, default="[2, 5]")
-    parser.add_argument("--cv_folds",     type=int,   default=5)
+    parser.add_argument("--data_path",         type=str,   default="crop_recommendation_preprocessing/crop_recommendation_preprocessing.csv")
+    parser.add_argument("--target_col",        type=str,   default="label_encoded")
+    parser.add_argument("--test_size",         type=float, default=0.2)
+    parser.add_argument("--random_state",      type=int,   default=42)
+    parser.add_argument("--n_estimators",      type=str,   default="[100,200]")
+    parser.add_argument("--max_depth",         type=str,   default="[null,10,20]")
+    parser.add_argument("--min_samples_split", type=str,   default="[2,5]")
+    parser.add_argument("--cv_folds",          type=int,   default=5)
     return parser.parse_args()
 
 
-#load data
-def load_data(data_path: str, target_col: str):
+def load_data(data_path, target_col):
     print(f"[INFO] Loading data from: {data_path}")
     df = pd.read_csv(data_path)
     print(f"[INFO] Shape: {df.shape}")
     print(f"[INFO] Columns: {df.columns.tolist()}")
+
     drop_cols = [target_col, "label"] if "label" in df.columns else [target_col]
     X = df.drop(columns=drop_cols)
     y = df[target_col]
+
     print(f"[INFO] Features: {X.columns.tolist()}")
     print(f"[INFO] Target  : {target_col}  |  Classes: {sorted(y.unique())}")
     return X, y
 
 
-#train model
-def train(args):
+def run_training(args):
     X, y = load_data(args.data_path, args.target_col)
 
-    #spilit data
     X_train, X_test, y_train, y_test = train_test_split(
         X, y,
         test_size=args.test_size,
@@ -70,110 +68,94 @@ def train(args):
     }
     print(f"[INFO] Param grid: {param_grid}")
 
+    mlflow.log_param("test_size",    args.test_size)
+    mlflow.log_param("random_state", args.random_state)
+    mlflow.log_param("cv_folds",     args.cv_folds)
+    mlflow.log_param("param_grid",   str(param_grid))
+
+    print("[INFO] Running GridSearchCV ...")
     base_rf = RandomForestClassifier(random_state=args.random_state, n_jobs=-1)
+    grid_search = GridSearchCV(
+        estimator=base_rf,
+        param_grid=param_grid,
+        cv=args.cv_folds,
+        scoring="accuracy",
+        n_jobs=-1,
+        verbose=1,
+    )
+    grid_search.fit(X_train, y_train)
 
-    #mlflow
-    mlflow.set_experiment("crop-recommendation-rf")
+    best_model  = grid_search.best_estimator_
+    best_params = grid_search.best_params_
+    print(f"[INFO] Best params: {best_params}")
 
-    with mlflow.start_run() as run:
-        run_id = run.info.run_id
-        print(f"[INFO] MLflow run_id: {run_id}")
+    for k, v in best_params.items():
+        mlflow.log_param(f"best_{k}", v)
 
-        #log parameters
-        mlflow.log_param("test_size",    args.test_size)
-        mlflow.log_param("random_state", args.random_state)
-        mlflow.log_param("cv_folds",     args.cv_folds)
-        mlflow.log_param("param_grid",   str(param_grid))
+    y_pred    = best_model.predict(X_test)
+    acc       = accuracy_score(y_test, y_pred)
+    f1        = f1_score(y_test, y_pred, average="weighted")
+    precision = precision_score(y_test, y_pred, average="weighted", zero_division=0)
+    recall    = recall_score(y_test, y_pred, average="weighted", zero_division=0)
+    cv_scores = cross_val_score(best_model, X_train, y_train, cv=5, scoring="accuracy")
 
-        #grid search
-        print("[INFO] Running GridSearchCV ...")
-        grid_search = GridSearchCV(
-            estimator=base_rf,
-            param_grid=param_grid,
-            cv=args.cv_folds,
-            scoring="accuracy",
-            n_jobs=-1,
-            verbose=1,
-        )
-        grid_search.fit(X_train, y_train)
+    print(f"\n[RESULT] Accuracy  : {acc:.4f}")
+    print(f"[RESULT] F1 Score  : {f1:.4f}")
+    print(f"[RESULT] Precision : {precision:.4f}")
+    print(f"[RESULT] Recall    : {recall:.4f}")
+    print(f"[RESULT] CV Mean   : {cv_scores.mean():.4f} +/- {cv_scores.std():.4f}")
 
-        best_model = grid_search.best_estimator_
-        best_params = grid_search.best_params_
-        print(f"[INFO] Best params: {best_params}")
+    mlflow.log_metric("accuracy",         acc)
+    mlflow.log_metric("f1_score",         f1)
+    mlflow.log_metric("precision",        precision)
+    mlflow.log_metric("recall",           recall)
+    mlflow.log_metric("cv_mean_accuracy", cv_scores.mean())
+    mlflow.log_metric("cv_std_accuracy",  cv_scores.std())
+    mlflow.log_metric("best_cv_score",    grid_search.best_score_)
 
-        #best param
-        for k, v in best_params.items():
-            mlflow.log_param(f"best_{k}", v)
+    report = classification_report(y_test, y_pred)
+    print("\n[REPORT]\n", report)
+    with open("classification_report.txt", "w") as f:
+        f.write(report)
+    mlflow.log_artifact("classification_report.txt")
 
-        #evaluasi model
-        y_pred = best_model.predict(X_test)
+    cm_df = pd.DataFrame(confusion_matrix(y_test, y_pred))
+    cm_df.to_csv("confusion_matrix.csv", index=False)
+    mlflow.log_artifact("confusion_matrix.csv")
 
-        acc       = accuracy_score(y_test, y_pred)
-        f1        = f1_score(y_test, y_pred, average="weighted")
-        precision = precision_score(y_test, y_pred, average="weighted", zero_division=0)
-        recall    = recall_score(y_test, y_pred, average="weighted", zero_division=0)
+    mlflow.log_artifact(args.data_path)
 
-        #cross validation
-        cv_scores = cross_val_score(best_model, X_train, y_train, cv=5, scoring="accuracy")
+    mlflow.sklearn.log_model(
+        sk_model=best_model,
+        artifact_path="random_forest_model",
+        registered_model_name="crop-recommendation-rf",
+    )
 
-        print(f"\n[RESULT] Accuracy  : {acc:.4f}")
-        print(f"[RESULT] F1 Score  : {f1:.4f}")
-        print(f"[RESULT] Precision : {precision:.4f}")
-        print(f"[RESULT] Recall    : {recall:.4f}")
-        print(f"[RESULT] CV Mean   : {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+    os.makedirs("model_output", exist_ok=True)
+    model_pkl = "model_output/model.pkl"
+    with open(model_pkl, "wb") as f:
+        pickle.dump(best_model, f)
+    print(f"[INFO] Model saved to {model_pkl}")
+    mlflow.log_artifact(model_pkl)
 
-        #log metrics
-        mlflow.log_metric("accuracy",          acc)
-        mlflow.log_metric("f1_score",          f1)
-        mlflow.log_metric("precision",         precision)
-        mlflow.log_metric("recall",            recall)
-        mlflow.log_metric("cv_mean_accuracy",  cv_scores.mean())
-        mlflow.log_metric("cv_std_accuracy",   cv_scores.std())
-        mlflow.log_metric("best_cv_score",     grid_search.best_score_)
+    run_id = mlflow.active_run().info.run_id
+    with open("run_id.txt", "w") as f:
+        f.write(run_id)
+    print(f"[INFO] run_id saved to run_id.txt: {run_id}")
+    print(f"\n[DONE] Training completed. run_id: {run_id}")
 
-        #classification report
-        report = classification_report(y_test, y_pred)
-        print("\n[REPORT]\n", report)
 
-        report_path = "classification_report.txt"
-        with open(report_path, "w") as f:
-            f.write(report)
-        mlflow.log_artifact(report_path)
-
-        #confusion matrix
-        cm = confusion_matrix(y_test, y_pred)
-        cm_df = pd.DataFrame(cm)
-        cm_path = "confusion_matrix.csv"
-        cm_df.to_csv(cm_path, index=False)
-        mlflow.log_artifact(cm_path)
-
-        #artifact dataset
-        mlflow.log_artifact(args.data_path)
-
-        #log model
-        mlflow.sklearn.log_model(
-            sk_model=best_model,
-            artifact_path="random_forest_model",
-            registered_model_name="crop-recommendation-rf",
-        )
-
-        #save untuk GitHub Actions step berikutnya
-        os.makedirs("model_output", exist_ok=True)
-        model_pkl_path = "model_output/model.pkl"
-        with open(model_pkl_path, "wb") as f:
-            pickle.dump(best_model, f)
-        print(f"[INFO] Model saved to {model_pkl_path}")
-        mlflow.log_artifact(model_pkl_path)
-
-        #save run_id untuk GitHub Actions step berikutnya
-        with open("run_id.txt", "w") as f:
-            f.write(run_id)
-        print(f"[INFO] run_id saved to run_id.txt")
-
-        print(f"\n[DONE] MLflow run completed: {run_id}")
-        return run_id
-
-#main
 if __name__ == "__main__":
     args = parse_args()
-    train(args)
+
+    injected_run_id = os.environ.get("MLFLOW_RUN_ID", "").strip()
+
+    if injected_run_id:
+        print(f"[INFO] MLflow Project mode — resuming run: {injected_run_id}")
+        with mlflow.start_run():
+            run_training(args)
+    else:
+        print("[INFO] Standalone mode — creating new MLflow run")
+        mlflow.set_experiment("crop-recommendation-rf")
+        with mlflow.start_run():
+            run_training(args)

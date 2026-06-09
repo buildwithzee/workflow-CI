@@ -73,14 +73,13 @@ jobs:
           MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
         run: |
-          echo "==============================="
-          echo " Starting MLflow Project Run"
-          echo "==============================="
+          N_EST="${{ github.event.inputs.n_estimators }}"
+          MAX_D="${{ github.event.inputs.max_depth }}"
+          MIN_S="${{ github.event.inputs.min_samples_split }}"
 
-          # Gunakan input dari workflow_dispatch jika ada, default jika tidak
-          N_EST="${{ github.event.inputs.n_estimators || '[100, 200]' }}"
-          MAX_D="${{ github.event.inputs.max_depth || '[null, 10, 20]' }}"
-          MIN_S="${{ github.event.inputs.min_samples_split || '[2, 5]' }}"
+          [ -z "$N_EST" ] && N_EST="[100,200]"
+          [ -z "$MAX_D" ] && MAX_D="[null,10,20]"
+          [ -z "$MIN_S" ] && MIN_S="[2,5]"
 
           echo "n_estimators     : $N_EST"
           echo "max_depth        : $MAX_D"
