@@ -1,0 +1,42 @@
+name: crop-recommendation
+
+conda_env: conda.yaml
+
+entry_points:
+  main:
+    parameters:
+      data_path:
+        type: str
+        default: "crop_recommendation_preprocessing/crop_recommendation_preprocessing.csv"
+      target_col:
+        type: str
+        default: "label_encoded"
+      test_size:
+        type: float
+        default: 0.2
+      random_state:
+        type: int
+        default: 42
+      n_estimators:
+        type: str
+        default: "[100, 200]"
+      max_depth:
+        type: str
+        default: "[null, 10, 20]"
+      min_samples_split:
+        type: str
+        default: "[2, 5]"
+      cv_folds:
+        type: int
+        default: 5
+
+    command: >
+      python modelling.py
+        --data_path {data_path}
+        --target_col {target_col}
+        --test_size {test_size}
+        --random_state {random_state}
+        --n_estimators "{n_estimators}"
+        --max_depth "{max_depth}"
+        --min_samples_split "{min_samples_split}"
+        --cv_folds {cv_folds}
