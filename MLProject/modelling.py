@@ -3,11 +3,10 @@ import argparse
 import warnings
 import json
 import pickle
-
 import pandas as pd
 import mlflow
 import mlflow.sklearn
-
+import shutil
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.metrics import (
@@ -18,7 +17,6 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
 )
-
 warnings.filterwarnings("ignore")
 
 
@@ -131,12 +129,15 @@ def run_training(args):
         registered_model_name="crop-recommendation-rf",
     )
 
-    os.makedirs("model_output", exist_ok=True)
-    model_pkl = "model_output/model.pkl"
-    with open(model_pkl, "wb") as f:
-        pickle.dump(best_model, f)
-    print(f"[INFO] Model saved to {model_pkl}")
-    mlflow.log_artifact(model_pkl)
+    if os.path.exists("model_output"):
+        shutil.rmtree("model_output")
+
+    mlflow.sklearn.save_model(
+    sk_model=best_model,
+    path="model_output",
+    )
+    print("[INFO] MLflow model saved to model_output/")
+    mlflow.log_artifact("model_output")
 
     run_id = mlflow.active_run().info.run_id
     with open("run_id.txt", "w") as f:
